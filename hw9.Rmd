@@ -1,0 +1,179 @@
+---
+title: "hw9"
+author: "Yuen Tsz Abby Lau"
+date: "11/13/2020"
+output: pdf_document
+---
+
+## 7.5.1
+
+```{r}
+intf <- function(x) {
+    1/(5*sqrt(2*pi))*x^4*exp(-(x - 2)^2/2)
+}
+integrate(intf, Inf, -Inf)
+```
+
+### a) using the standard normal density
+
+```{r}
+## Monte Carlo approximation
+nrep <- 1000
+n <- c(1000, 10000, 50000)
+## normal sampler
+ff <- function(x) 1/5 * x^4 * dnorm(x, 2, 1)
+sapply(n, function(n) {
+    i.n <- replicate(nrep, {x <- rnorm(n); mean(ff(x) / dnorm(x, 0, 1))})
+    c(mean = mean(i.n), var = var(i.n))
+})
+
+
+
+```
+
+
+### b) use a different g 
+
+Instead of using the standard normal as $g$, we use normal density function with
+mean 2 and standard deviation 1. In this case, 
+$g(x) = f(x) = \frac{1}{\sqrt{2\pi}}e^{{{ - \left( {x - 2 } \right)^2 } 
+\mathord{\left/ {\vphantom {{ - \left( {x - \mu } \right)^2 } 
+{2}}} \right. \kern-\nulldelimiterspace} {2}}}$, and the 
+fact that $\frac{f(x)}{g(x)} = 1$ reduces the variance of $\widehat{\mu}_g$.
+
+
+### c) implement the function proposed in b)
+
+```{r}
+sapply(n, function(n) {
+    i.n <- replicate(nrep, {x <- rnorm(n, 2, 1); mean(ff(x) / dnorm(x, 2, 1))})
+    c(mean = mean(i.n), var = var(i.n))
+})
+
+```
+
+### d) comments
+
+Both (a) and (c) have estimates close to the true value.  However, the 
+main difference between these two approaches is the the variance of the 
+estimates. We can conclude that selecting an optimal $g(x)$ is crucial for 
+a better and more stable estimation.
+
+## 7.5.2
+
+### (a) implement the path of S(t)
+
+We can first work on the random portion of the brownian motion using the 
+`rBM` function defined below and then combine them with other elements.
+
+```{r}
+r <- 0.05; sigma <- 0.3; S0 <- 1;
+tgrid <- seq(0, 1, length = 12)[-1]
+
+rBM <- function(n, tgrid, sigma) {
+    tt <- c(0, tgrid)
+    dt <- diff(tt)
+    nt <- length(tgrid)
+    dw <- matrix(rnorm(n * nt, sd = sigma * sqrt(dt)), n, nt, byrow = TRUE)
+    t(apply(dw, 1, cumsum))
+}
+
+St_gen <- function(r, S0, n, tgrid, sigma) {
+    wt <- rBM(n, tgrid, sigma)
+    nt <- length(tgrid)
+    S0 * exp((r - sigma^2 / 2) * matrix(tgrid, n, nt, byrow = TRUE) + wt)
+}
+
+```
+
+### (b) correlation coefficients as $K$ increase
+
+```{r}
+eval_cov <- function(n, r, sigma, S0, K, tgrid) {
+    wt <- rBM(n, tgrid, sigma)
+    ## payoff of call option on arithmetic average
+    nt <- length(tgrid)
+    TT <- tgrid[nt]
+    St <- S0 * exp((r - sigma^2 / 2) * matrix(tgrid, n, nt, byrow = TRUE) + wt)
+    pAri <- pmax(rowMeans(St) - K, 0) * exp(-r * TT)
+    ## payoff of call option on european option
+    ST <- St[, nt]
+    pEur <- pmax(ST - K, 0) * exp(-r * TT)
+    ## payoff of geometric average
+    pGeo <- pmax(exp(rowMeans(log(St))) - K, 0) * exp(-r * TT)
+    ## underlying asset price
+    c(cor(pAri, ST), cor(pAri, pEur), cor(pAri, pGeo))
+}
+
+sigma <- 0.5
+S0 <- 1
+strike <- seq(1.1, 1.5, by = 0.1)
+sapply(strike, function(k) eval_cov(5000, r, sigma, S0, K = k, tgrid))
+```
+
+As $K$ increases, the correlation between $P_A$ and $S(T)$ decreases,
+and the correlation between $P_A$ and $P_E$ decreases as well. However, 
+the correlation between $P_A$ and $P_G$ stays high the whole time.
+
+### (c) correlation coefficients as $\sigma$ increases
+
+```{r}
+K <- 1.5
+sigma <- seq(0.2, 0.5, by = 0.1)
+sapply(sigma, function(s) eval_cov(5000, r, sigma = s, S0, K, tgrid))
+```
+As $\sigma$ increases, the correlation between $P_A$ and $S(T)$ increases,
+and the correlation between $P_A$ and $P_E$ increases as well. Again, 
+the correlation between $P_A$ and $P_G$ stays high the whole time.
+
+
+
+### (d) correlation coefficients as $T$ increases
+
+```{r}
+sigma <- 0.5
+time <- seq(0.4, 1.6, by = 0.3)
+tgrid <- sapply(time, function(x) seq(0, x, length = 12)[-1])
+sapply(1:length(time), function(s) eval_cov(5000, r, sigma, S0, K, 
+                                       tgrid = tgrid[, s]))
+```
+
+Similarly, both the correlation between $P_A$ and $S(T)$ and 
+the correlation between $P_A$ and $P_E$ increase when $T$ increases. Again, 
+the correlation between $P_A$ and $P_G$ stays high the whole time.
+
+### (e)  Compare the SDs
+
+```{r}
+callValLognorm <- function(S0, K, mu, sigma) {
+    d <- (log(S0 / K) + mu + sigma^2) / sigma
+    S0 * exp(mu + 0.5 * sigma^2) * pnorm(d) - K * pnorm(d - sigma)
+}
+
+controlVariate <- function(n, r, sigma, S0, K, tgrid) {
+    wt <- rBM(n, tgrid, sigma)
+    ## payoff of call option on arithmetic average
+    nt <- length(tgrid)
+    TT <- tgrid[nt]
+    St <- S0 * exp((r - sigma^2 / 2) * matrix(tgrid, n, nt, byrow = TRUE) + wt)
+    pAri <- pmax(rowMeans(St) - K, 0)
+    vAri <- mean(pAri)
+    ## payoff of call option on geometric average
+    pGeo <- pmax(exp(rowMeans(log(St))) - K, 0)
+    tbar <- mean(tgrid)
+    sBar2 <- sigma^2 / nt^2 / tbar * sum( (2 * seq(nt) - 1) * rev(tgrid))
+    pGeoTrue <- callValLognorm(S0, K, (r - 0.5 * sigma^2) * tbar,
+                               sqrt(sBar2 * tbar))
+    vGeo <- vAri - cov(pGeo, pAri) / var(pGeo) * (mean(pGeo) - pGeoTrue)
+    c(vAri, vGeo) * exp(-r * TT)
+}
+
+sigma <- 0.4
+K <- 1.5
+tgrid <- seq(0, 1, length = 12)[-1]
+sim <- replicate(50, controlVariate(n = 500, r, sigma, S0, K, tgrid))
+apply(sim, 1, sd)
+
+```
+
+It appears that SD is smaller using the covariate control. 
